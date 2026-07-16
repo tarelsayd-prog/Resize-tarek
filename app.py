@@ -3,6 +3,7 @@ import cloudinary
 import cloudinary.uploader
 from cloudinary.utils import cloudinary_url
 import pandas as pd
+import io
 
 # Page configuration
 st.set_page_config(page_title="Image Resizer Pro", layout="wide")
@@ -23,7 +24,7 @@ st.title("Image Resizer Pro (660x900)")
 st.write("Resize images to exactly 660x900 (0.73 aspect ratio) with a white background.")
 
 # Create two tabs for the different tools
-tab1, tab2 = st.tabs(["📁 Upload Image File", "🔗 Process URLs & Excel"])
+tab1, tab2 = st.tabs(["📁 Single File Upload", "🔗 Excel Batch Processor"])
 
 # ==========================================
 # TAB 1: ORIGINAL FILE UPLOAD
@@ -45,7 +46,7 @@ with tab1:
                         height=900,
                         crop="pad",
                         background="white",
-                        format="jpg"
+                        format="jpg" # Forces the .jpg extension
                     )
                     st.success("Success!")
                     st.image(transformed_url, caption="Resized Image", width=300)
@@ -53,81 +54,84 @@ with tab1:
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
 
+
 # ==========================================
-# TAB 2: URL & EXCEL BATCH PROCESSING
+# TAB 2: EXCEL BATCH PROCESSING
 # ==========================================
 with tab2:
-    st.header("Process via URLs or Excel")
-    
-    # Feature A: Direct Single URL
-    st.subheader("Direct Image URL")
-    image_url = st.text_input("Paste a direct image URL here:")
-    url_name = st.text_input("Name for this image (optional):", "direct_url_image")
-    
-    if st.button("Process URL") and image_url:
-        with st.spinner("Fetching and processing URL..."):
-            try:
-                # Cloudinary can upload directly from a public URL
-                upload_result = cloudinary.uploader.upload(image_url, public_id=url_name)
-                transformed_url, options = cloudinary_url(
-                    upload_result['public_id'],
-                    width=660,
-                    height=900,
-                    crop="pad",
-                    background="white",
-                    format="jpg"
-                )
-                st.success("Success!")
-                st.image(transformed_url, caption=f"Resized: {url_name}", width=300)
-                st.markdown(f"[**Download {url_name}**]({transformed_url})", unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Failed to process URL. Ensure it is a direct link to an image. Error: {e}")
-
-    st.divider()
-
-    # Feature B: Excel Bulk Upload
-    st.subheader("Bulk Process via Excel")
+    st.header("Bulk Process via Excel")
     st.info("Format: Column A = Desired Name | Column B = Image 1 URL | Column C = Image 2 URL (etc.)")
     
     uploaded_excel = st.file_uploader("Upload your Excel file", type=["xlsx", "xls"])
     
     if uploaded_excel is not None:
         # Read the excel file using pandas
-        df = pd.read_excel(uploaded_excel, header=None) # header=None so we just read raw columns
-        st.write("Preview of your data:")
+        df = pd.read_excel(uploaded_excel, header=None)
+        
+        st.write("Preview of original data:")
         st.dataframe(df.head())
         
-        if st.button("Process Excel File"):
-            st.write("### Results")
+        if st.button("Start Batch Processing"):
+            st.write("Processing images... Please wait.")
+            
+            # Create a copy of the dataframe to store our new URLs
+            output_df = df.copy()
+            
+            # Setup a progress bar
+            progress_bar = st.progress(0)
+            total_rows = len(df)
             
             # Loop through each row in the Excel sheet
-            for index, row in df.iterrows():
-                # Get the base name from Column A (index 0)
+            for row_idx, row in df.iterrows():
                 base_name = str(row[0]).strip()
                 
-                # Get all remaining columns (the URLs) and drop empty cells
-                urls = row[1:].dropna().tolist()
-                
-                if not urls:
-                    continue
-                
-                st.markdown(f"**Processing Row: {base_name}**")
-                
-                # Loop through each URL in that row
-                for i, url in enumerate(urls):
-                    # Create a unique name: e.g., "ProductA_img1"
-                    image_name = f"{base_name}_img{i+1}" 
+                # Loop through each column starting from Column B (index 1)
+                for col_idx in range(1, len(row)):
+                    original_url = row[col_idx]
                     
-                    try:
-                        upload_result = cloudinary.uploader.upload(str(url).strip(), public_id=image_name)
-                        transformed_url, options = cloudinary_url(
-                            upload_result['public_id'],
-                            width=660,
-                            height=900,
-                            crop="pad",
-                            background="white",
-                            format="jpg"
-                        )
-                        st.markdown(f"- ✅ [{image_name} (Click to View/Download)]({transformed_url})")
-                    except Exception as e:
-                        st.error(f"- ❌ Failed {image_name}: URL might be broken or inaccessible.")
+                    # Check if the cell is not empty
+                    if pd.notna(original_url) and str(original_url).strip() != "":
+                        image_name = f"{base_name}_img{col_idx}" 
+                        
+                        try:
+                            # Upload to Cloudinary
+                            upload_result = cloudinary.uploader.upload(str(original_url).strip(), public_id=image_name)
+                            
+                            # Generate the URL ending in .jpg
+                            transformed_url, options = cloudinary_url(
+                                upload_result['public_id'],
+                                width=660,
+                                height=900,
+                                crop="pad",
+                                background="white",
+                                format="jpg" # This forces the URL to end in .jpg
+                            )
+                            
+                            # Replace the original URL with the new Cloudinary .jpg URL in our output dataframe
+                            output_df.iat[row_idx, col_idx] = transformed_url
+                            
+                        except Exception as e:
+                            # If it fails (e.g., dead link), mark it in the Excel sheet so you know
+                            output_df.iat[row_idx, col_idx] = f"ERROR: Could not process"
+                
+                # Update progress bar
+                progress_bar.progress((row_idx + 1) / total_rows)
+            
+            st.success("✅ Processing Complete!")
+            
+            st.write("Preview of new data:")
+            st.dataframe(output_df.head())
+            
+            # Convert the output DataFrame to an Excel file in memory
+            output_buffer = io.BytesIO()
+            with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                output_df.to_excel(writer, index=False, header=False)
+            
+            # Provide the download button
+            st.download_button(
+                label="📥 Download Updated Excel File",
+                data=output_buffer.getvalue(),
+                file_name="processed_images.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
