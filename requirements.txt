@@ -2,3 +2,4 @@ streamlit
 cloudinary
 pandas
 openpyxl
+requests
