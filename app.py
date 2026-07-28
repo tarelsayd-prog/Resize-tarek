@@ -4,6 +4,7 @@ import cloudinary.uploader
 from cloudinary.utils import cloudinary_url
 import pandas as pd
 import io
+import re
 
 # Page configuration
 st.set_page_config(page_title="Image Resizer Pro", layout="wide")
@@ -19,6 +20,18 @@ try:
 except KeyError:
     st.error("Missing Cloudinary keys! Please add them to your Streamlit Cloud settings under 'Secrets'.")
     st.stop()
+
+# Helper function to convert Google Drive viewer links to direct download links
+def convert_gdrive_url(url):
+    url_str = str(url).strip()
+    if "drive.google.com/file/d/" in url_str:
+        # Extract the unique file ID from the URL
+        match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url_str)
+        if match:
+            file_id = match.group(1)
+            # Create a direct download link that Cloudinary can read
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url_str
 
 st.title("Image Resizer Pro (660x900)")
 st.write("Resize images to exactly 660x900 (0.73 aspect ratio) with a white background.")
@@ -87,10 +100,13 @@ with tab2:
                         image_name = f"{base_name}_img{col_idx}" 
                         
                         try:
-                            # Upload to Cloudinary
-                            upload_result = cloudinary.uploader.upload(str(original_url).strip(), public_id=image_name)
+                            # 1. Convert the URL if it's a Google Drive link
+                            direct_url = convert_gdrive_url(original_url)
                             
-                            # Generate the URL ending in .jpg
+                            # 2. Upload the direct URL to Cloudinary
+                            upload_result = cloudinary.uploader.upload(direct_url, public_id=image_name)
+                            
+                            # 3. Generate the final resized URL ending in .jpg
                             transformed_url, options = cloudinary_url(
                                 upload_result['public_id'],
                                 width=660,
@@ -100,10 +116,10 @@ with tab2:
                                 format="jpg"
                             )
                             
+                            # 4. Save to the new Excel sheet
                             output_df.iat[row_idx, col_idx] = transformed_url
                             
                         except Exception as e:
-                            # Capture the exact error message
                             error_msg = str(e)
                             st.warning(f"Failed to process '{base_name}' at column {col_idx+1}. Reason: {error_msg}")
                             output_df.iat[row_idx, col_idx] = f"ERROR: {error_msg}"
