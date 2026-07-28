@@ -46,14 +46,13 @@ with tab1:
                         height=900,
                         crop="pad",
                         background="white",
-                        format="jpg" # Forces the .jpg extension
+                        format="jpg"
                     )
                     st.success("Success!")
                     st.image(transformed_url, caption="Resized Image", width=300)
                     st.markdown(f"[**Download Resized Image**]({transformed_url})", unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
-
 
 # ==========================================
 # TAB 2: EXCEL BATCH PROCESSING
@@ -74,22 +73,16 @@ with tab2:
         if st.button("Start Batch Processing"):
             st.write("Processing images... Please wait.")
             
-            # Create a copy of the dataframe to store our new URLs
             output_df = df.copy()
-            
-            # Setup a progress bar
             progress_bar = st.progress(0)
             total_rows = len(df)
             
-            # Loop through each row in the Excel sheet
             for row_idx, row in df.iterrows():
                 base_name = str(row[0]).strip()
                 
-                # Loop through each column starting from Column B (index 1)
                 for col_idx in range(1, len(row)):
                     original_url = row[col_idx]
                     
-                    # Check if the cell is not empty
                     if pd.notna(original_url) and str(original_url).strip() != "":
                         image_name = f"{base_name}_img{col_idx}" 
                         
@@ -104,17 +97,17 @@ with tab2:
                                 height=900,
                                 crop="pad",
                                 background="white",
-                                format="jpg" # This forces the URL to end in .jpg
+                                format="jpg"
                             )
                             
-                            # Replace the original URL with the new Cloudinary .jpg URL in our output dataframe
                             output_df.iat[row_idx, col_idx] = transformed_url
                             
                         except Exception as e:
-                            # If it fails (e.g., dead link), mark it in the Excel sheet so you know
-                            output_df.iat[row_idx, col_idx] = f"ERROR: Could not process"
+                            # Capture the exact error message
+                            error_msg = str(e)
+                            st.warning(f"Failed to process '{base_name}' at column {col_idx+1}. Reason: {error_msg}")
+                            output_df.iat[row_idx, col_idx] = f"ERROR: {error_msg}"
                 
-                # Update progress bar
                 progress_bar.progress((row_idx + 1) / total_rows)
             
             st.success("✅ Processing Complete!")
@@ -122,12 +115,10 @@ with tab2:
             st.write("Preview of new data:")
             st.dataframe(output_df.head())
             
-            # Convert the output DataFrame to an Excel file in memory
             output_buffer = io.BytesIO()
             with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                 output_df.to_excel(writer, index=False, header=False)
             
-            # Provide the download button
             st.download_button(
                 label="📥 Download Updated Excel File",
                 data=output_buffer.getvalue(),
