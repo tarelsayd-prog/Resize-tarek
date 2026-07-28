@@ -38,38 +38,80 @@ st.title("Image Resizer Pro (660x900)")
 st.write("Resize images to exactly 660x900 (0.73 aspect ratio) with a white background.")
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["📁 Single File", "🔗 Excel (Update Links)", "📦 Bulk Download (ZIP)"])
+tab1, tab2, tab3 = st.tabs(["📁 Bulk File Upload (to Excel)", "🔗 Excel (Update Links)", "📦 Bulk Download (ZIP)"])
 
 # ==========================================
-# TAB 1: ORIGINAL FILE UPLOAD
+# TAB 1: BULK FILE UPLOAD TO EXCEL (NEW)
 # ==========================================
 with tab1:
-    st.header("Single Image Upload")
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png", "webp"])
+    st.header("Bulk Image Upload")
+    st.write("Upload multiple images straight from your computer. The app will process them and give you an Excel sheet with all the new links.")
+    
+    # Notice the accept_multiple_files=True
+    uploaded_files = st.file_uploader("Choose images...", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
 
-    if uploaded_file is not None:
-        st.image(uploaded_file, caption="Original Image", width=300)
+    if uploaded_files:
+        st.info(f"Ready to process **{len(uploaded_files)}** images.")
         
-        if st.button("Process Single Image"):
+        if st.button("Process Uploaded Images"):
             with st.spinner("Uploading and processing..."):
-                try:
-                    upload_result = cloudinary.uploader.upload(uploaded_file)
-                    transformed_url, options = cloudinary_url(
-                        upload_result['public_id'],
-                        width=660, height=900, crop="pad", background="white", format="jpg"
-                    )
-                    st.success("Success!")
-                    st.image(transformed_url, caption="Resized Image", width=300)
-                    st.markdown(f"[**Download Resized Image**]({transformed_url})", unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                results = []
+                progress_bar = st.progress(0)
+                
+                for i, file in enumerate(uploaded_files):
+                    try:
+                        # Extract original filename without extension for the public_id
+                        safe_name = file.name.rsplit('.', 1)[0]
+                        
+                        # Upload file directly to Cloudinary
+                        upload_result = cloudinary.uploader.upload(file, public_id=safe_name)
+                        
+                        # Generate transformed URL
+                        transformed_url, options = cloudinary_url(
+                            upload_result['public_id'],
+                            width=660, height=900, crop="pad", background="white", format="jpg"
+                        )
+                        
+                        # Store success result
+                        results.append({
+                            "Original Filename": file.name,
+                            "Cloudinary Link": transformed_url
+                        })
+                        
+                    except Exception as e:
+                        # Store error result
+                        results.append({
+                            "Original Filename": file.name,
+                            "Cloudinary Link": f"ERROR: {str(e)}"
+                        })
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                st.success("✅ All files processed!")
+                
+                # Display a preview table
+                df_results = pd.DataFrame(results)
+                st.dataframe(df_results, use_container_width=True)
+                
+                # Generate Excel file for download
+                output_buffer = io.BytesIO()
+                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                    df_results.to_excel(writer, index=False)
+                
+                st.download_button(
+                    label="📥 Download Excel with Links",
+                    data=output_buffer.getvalue(),
+                    file_name="uploaded_image_links.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
 
 # ==========================================
 # TAB 2: EXCEL BATCH PROCESSING (URLS)
 # ==========================================
 with tab2:
     st.header("Excel Link Updater")
-    st.info("Returns an Excel sheet with new Cloudinary links.")
+    st.info("Format: Column A = Desired Name | Column B = Image 1 URL | Column C = Image 2 URL (etc.)")
     uploaded_excel = st.file_uploader("Upload Excel file", type=["xlsx", "xls"], key="tab2_upload")
     
     if uploaded_excel is not None:
@@ -77,7 +119,7 @@ with tab2:
         if st.button("Process Links"):
             st.write("Processing... (2-second pause between images to prevent blocks)")
             output_df = df.copy()
-            progress_bar = st.progress(0)
+            progress_bar_tab2 = st.progress(0)
             
             for row_idx, row in df.iterrows():
                 base_name = str(row[0]).strip()
@@ -94,16 +136,16 @@ with tab2:
                             time.sleep(2)
                         except Exception as e:
                             output_df.iat[row_idx, col_idx] = f"ERROR: {str(e)}"
-                progress_bar.progress((row_idx + 1) / len(df))
+                progress_bar_tab2.progress((row_idx + 1) / len(df))
             
             st.success("✅ Complete!")
-            output_buffer = io.BytesIO()
-            with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+            output_buffer2 = io.BytesIO()
+            with pd.ExcelWriter(output_buffer2, engine='openpyxl') as writer:
                 output_df.to_excel(writer, index=False, header=False)
-            st.download_button("📥 Download Updated Excel", data=output_buffer.getvalue(), file_name="processed_links.xlsx")
+            st.download_button("📥 Download Updated Excel", data=output_buffer2.getvalue(), file_name="processed_links.xlsx", type="primary")
 
 # ==========================================
-# TAB 3: BULK DOWNLOAD TO ZIP (NEW)
+# TAB 3: BULK DOWNLOAD TO ZIP 
 # ==========================================
 with tab3:
     st.header("Bulk Image Downloader")
@@ -111,16 +153,14 @@ with tab3:
     
     input_method = st.radio("Choose Input Method:", ["Upload Excel file", "Paste Bulk Links"])
     
-    links_to_process = [] # Will store a list of dictionaries: {"name": "filename", "url": "http..."}
+    links_to_process = []
     
     if input_method == "Paste Bulk Links":
         pasted_links = st.text_area("Paste image links here (one link per line):", height=200)
         if pasted_links:
-            # Split the text area into individual lines
             for idx, line in enumerate(pasted_links.split('\n')):
                 clean_link = line.strip()
                 if clean_link:
-                    # Automatically generate a generic name for pasted links
                     links_to_process.append({"name": f"image_{idx+1}", "url": clean_link})
                     
     elif input_method == "Upload Excel file":
@@ -137,7 +177,6 @@ with tab3:
                          image_name = f"{base_name}_img{col_idx}"
                          links_to_process.append({"name": image_name, "url": str(url).strip()})
     
-    # Processing block for ZIP creation
     if len(links_to_process) > 0:
         st.write(f"Total images found: **{len(links_to_process)}**")
         
@@ -146,32 +185,23 @@ with tab3:
             progress_bar_zip = st.progress(0)
             status_text = st.empty()
             
-            # Create the ZIP file in memory
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for i, item in enumerate(links_to_process):
                     status_text.text(f"Processing: {item['name']}...")
                     try:
-                        # 1. Convert Drive URL if needed
                         direct_url = convert_gdrive_url(item["url"])
-                        
-                        # 2. Upload to Cloudinary
                         upload_result = cloudinary.uploader.upload(direct_url, public_id=item["name"])
-                        
-                        # 3. Generate Cloudinary link
                         transformed_url, options = cloudinary_url(
                             upload_result['public_id'],
                             width=660, height=900, crop="pad", background="white", format="jpg"
                         )
                         
-                        # 4. Download the actual image file from Cloudinary
                         img_response = requests.get(transformed_url)
                         if img_response.status_code == 200:
-                            # 5. Write the image file into the ZIP archive
                             zip_file.writestr(f"{item['name']}.jpg", img_response.content)
                         else:
                             st.error(f"Could not fetch image data for {item['name']}.")
                             
-                        # 2-second pause to protect against rate limits
                         time.sleep(2)
                         
                     except Exception as e:
