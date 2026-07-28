@@ -5,6 +5,7 @@ from cloudinary.utils import cloudinary_url
 import pandas as pd
 import io
 import re
+import time # NEW: Added time module to handle pauses
 
 # Page configuration
 st.set_page_config(page_title="Image Resizer Pro", layout="wide")
@@ -25,11 +26,9 @@ except KeyError:
 def convert_gdrive_url(url):
     url_str = str(url).strip()
     if "drive.google.com/file/d/" in url_str:
-        # Extract the unique file ID from the URL
         match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url_str)
         if match:
             file_id = match.group(1)
-            # Create a direct download link that Cloudinary can read
             return f"https://drive.google.com/uc?export=download&id={file_id}"
     return url_str
 
@@ -77,14 +76,13 @@ with tab2:
     uploaded_excel = st.file_uploader("Upload your Excel file", type=["xlsx", "xls"])
     
     if uploaded_excel is not None:
-        # Read the excel file using pandas
         df = pd.read_excel(uploaded_excel, header=None)
         
         st.write("Preview of original data:")
         st.dataframe(df.head())
         
         if st.button("Start Batch Processing"):
-            st.write("Processing images... Please wait.")
+            st.write("Processing images... Please wait. (Adding a 2-second pause between images to prevent Google Drive blocking)")
             
             output_df = df.copy()
             progress_bar = st.progress(0)
@@ -118,6 +116,9 @@ with tab2:
                             
                             # 4. Save to the new Excel sheet
                             output_df.iat[row_idx, col_idx] = transformed_url
+                            
+                            # 5. NEW: Pause for 2 seconds to avoid rate limits
+                            time.sleep(2)
                             
                         except Exception as e:
                             error_msg = str(e)
