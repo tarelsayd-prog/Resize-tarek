@@ -5,7 +5,7 @@ from cloudinary.utils import cloudinary_url
 import pandas as pd
 import io
 import re
-import time # NEW: Added time module to handle pauses
+import time
 
 # Page configuration
 st.set_page_config(page_title="Image Resizer Pro", layout="wide")
@@ -82,11 +82,14 @@ with tab2:
         st.dataframe(df.head())
         
         if st.button("Start Batch Processing"):
-            st.write("Processing images... Please wait. (Adding a 2-second pause between images to prevent Google Drive blocking)")
+            st.write("Processing images... Please wait.")
             
             output_df = df.copy()
             progress_bar = st.progress(0)
             total_rows = len(df)
+            
+            # List to build our visual downloadable table
+            table_records = []
             
             for row_idx, row in df.iterrows():
                 base_name = str(row[0]).strip()
@@ -98,13 +101,9 @@ with tab2:
                         image_name = f"{base_name}_img{col_idx}" 
                         
                         try:
-                            # 1. Convert the URL if it's a Google Drive link
                             direct_url = convert_gdrive_url(original_url)
-                            
-                            # 2. Upload the direct URL to Cloudinary
                             upload_result = cloudinary.uploader.upload(direct_url, public_id=image_name)
                             
-                            # 3. Generate the final resized URL ending in .jpg
                             transformed_url, options = cloudinary_url(
                                 upload_result['public_id'],
                                 width=660,
@@ -114,30 +113,62 @@ with tab2:
                                 format="jpg"
                             )
                             
-                            # 4. Save to the new Excel sheet
+                            # Save to output DataFrame
                             output_df.iat[row_idx, col_idx] = transformed_url
                             
-                            # 5. NEW: Pause for 2 seconds to avoid rate limits
-                            time.sleep(2)
+                            # Add record to our visual download table
+                            table_records.append({
+                                "Item Name": f"{base_name} (Img {col_idx})",
+                                "Status": "✅ Success",
+                                "Preview": transformed_url,
+                                "Download Link": transformed_url
+                            })
+                            
+                            time.sleep(2) # 2-second delay to avoid Google Drive rate limits
                             
                         except Exception as e:
                             error_msg = str(e)
-                            st.warning(f"Failed to process '{base_name}' at column {col_idx+1}. Reason: {error_msg}")
                             output_df.iat[row_idx, col_idx] = f"ERROR: {error_msg}"
+                            table_records.append({
+                                "Item Name": f"{base_name} (Img {col_idx})",
+                                "Status": f"❌ Error: {error_msg}",
+                                "Preview": None,
+                                "Download Link": None
+                            })
                 
                 progress_bar.progress((row_idx + 1) / total_rows)
             
             st.success("✅ Processing Complete!")
             
-            st.write("Preview of new data:")
-            st.dataframe(output_df.head())
+            # ----------------------------------------------------
+            # 1. DOWNLOADABLE IMAGES TABLE VIEW
+            # ----------------------------------------------------
+            st.subheader("🖼️ Processed Images Table")
+            summary_df = pd.DataFrame(table_records)
             
+            if not summary_df.empty:
+                st.dataframe(
+                    summary_df,
+                    column_config={
+                        "Item Name": st.column_config.TextColumn("Item Name"),
+                        "Status": st.column_config.TextColumn("Status"),
+                        "Preview": st.column_config.ImageColumn("Image Preview", help="Thumbnail of processed image"),
+                        "Download Link": st.column_config.LinkColumn("Download Link", display_text="Open / Download JPG")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            # ----------------------------------------------------
+            # 2. DOWNLOAD EXCEL FILE BUTTON
+            # ----------------------------------------------------
+            st.subheader("📥 Download Excel Sheet")
             output_buffer = io.BytesIO()
             with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
                 output_df.to_excel(writer, index=False, header=False)
             
             st.download_button(
-                label="📥 Download Updated Excel File",
+                label="Download Updated Excel File",
                 data=output_buffer.getvalue(),
                 file_name="processed_images.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
